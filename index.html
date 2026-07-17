@@ -508,11 +508,48 @@
     function render(){ renderSummary(); renderTable(); renderLogs(); }
 
     $("inventoryBody").addEventListener("input",e=>{
-      const input=e.target.closest(".js-current"); if(!input) return;
-      const name=input.closest("tr").dataset.name;
-      state.currentStocks[name]=parseStock(input.value);
-      saveData(); renderSummary(); renderTable();
+      const input=e.target.closest(".js-current");
+      if(!input) return;
+
+      const row=input.closest("tr");
+      const name=row.dataset.name;
+      const master=INVENTORY_MASTER.find(item=>item.name===name);
+      if(!master) return;
+
+      const current=parseStock(input.value);
+      const order=getOrder(current,master.max);
+      const status=getStatus(current,master.max);
+      const percent=getPercent(current,master.max);
+
+      state.currentStocks[name]=current;
+      saveData();
+      renderSummary();
+
+      const cells=row.querySelectorAll("td");
+      cells[4].innerHTML=`<span class="status ${order===0?'ok':'danger'}">${escapeHtml(formatStock(order))}</span>`;
+      cells[5].innerHTML=`<div class="stock-meter"><strong>${escapeHtml(formatStock(current))} / ${escapeHtml(formatStock(master.max))}</strong><div class="bar"><span style="width:${percent}%"></span></div></div>`;
+      cells[6].innerHTML=`<span class="status ${status.className}">${status.text}</span>`;
+      row.className=status.rowClass;
     });
+
+    $("inventoryBody").addEventListener("keydown",e=>{
+      const input=e.target.closest(".js-current");
+      if(!input || e.key!=="Enter") return;
+
+      e.preventDefault();
+
+      const inputs=Array.from(
+        document.querySelectorAll("#inventoryBody .js-current")
+      );
+      const currentIndex=inputs.indexOf(input);
+      const nextInput=inputs[(currentIndex+1)%inputs.length];
+
+      if(nextInput){
+        nextInput.focus();
+        nextInput.select();
+      }
+    });
+
     $("searchInput").addEventListener("input",renderTable);
 
     $("checkInventoryButton").addEventListener("click",()=>{
