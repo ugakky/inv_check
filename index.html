@@ -199,7 +199,35 @@
     }
 
     tr.low-stock {
-      background: #fff9ee;
+      background: #fff1f4;
+    }
+
+    tr.checked-stock {
+      background: #eefaf4;
+    }
+
+    tr.unchecked-stock {
+      background: #ffffff;
+    }
+
+    .js-current::placeholder {
+      color: #777;
+      opacity: 1;
+      text-align: center;
+    }
+
+    .js-current:focus::placeholder {
+      color: transparent;
+    }
+
+    .js-current.is-entered {
+      border-color: #8fd5b5;
+      background: #f3fcf7;
+    }
+
+    .js-current.needs-order {
+      border-color: #ff9aae;
+      background: #fff5f7;
     }
 
     .category {
@@ -396,7 +424,7 @@
   </footer>
 
   <script>
-    const STORAGE_KEY = "embedded_inventory_order_checker_v1";
+    const STORAGE_KEY = "embedded_inventory_order_checker_v2";
 
     // 可変
     const INVENTORY_MASTER = [
@@ -426,8 +454,9 @@
 
     function roundStock(value) { return Math.round(value * 10) / 10; }
     function parseStock(value) {
+      if (value === "") return null;
       const n = Number(value);
-      return Number.isFinite(n) && n >= 0 ? roundStock(n) : 0;
+      return Number.isFinite(n) && n >= 0 ? roundStock(n) : null;
     }
     function formatStock(value) {
       return Number(value).toLocaleString("ja-JP", { maximumFractionDigits: 1 });
@@ -443,13 +472,18 @@
       return String(value).replaceAll("&","&amp;").replaceAll("<","&lt;")
         .replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;");
     }
-    function getCurrent(name) { return parseStock(state.currentStocks[name] ?? 0); }
-    function getOrder(current, max) { return roundStock(Math.max(0, max-current)); }
-    function getPercent(current,max) { return max>0 ? Math.min(100,Math.round(current/max*100)) : 0; }
+    function hasCurrent(name) {
+      return Object.prototype.hasOwnProperty.call(state.currentStocks, name)
+        && state.currentStocks[name] !== ""
+        && state.currentStocks[name] !== null;
+    }
+    function getCurrent(name) { return hasCurrent(name) ? Number(state.currentStocks[name]) : null; }
+    function getOrder(current, max) { return current === null ? null : roundStock(Math.max(0, max-current)); }
+    function getPercent(current,max) { return current === null ? 0 : (max>0 ? Math.min(100,Math.round(current/max*100)) : 0); }
     function getStatus(current,max) {
-      if (current<=0) return {text:"在庫なし",className:"danger",rowClass:"empty-stock"};
-      if (current<max) return {text:"発注必要",className:"warn",rowClass:"low-stock"};
-      return {text:"補充不要",className:"ok",rowClass:""};
+      if (current === null) return {text:"未入力",className:"",rowClass:"unchecked-stock"};
+      if (current < max) return {text:"発注あり",className:"danger",rowClass:"low-stock"};
+      return {text:"補充不要",className:"ok",rowClass:"checked-stock"};
     }
     function loadData() {
       try {
@@ -465,8 +499,8 @@
       let orderItems=0, emptyItems=0;
       INVENTORY_MASTER.forEach(item=>{
         const current=getCurrent(item.name);
-        if(getOrder(current,item.max)>0) orderItems++;
-        if(current<=0) emptyItems++;
+        if(current !== null && getOrder(current,item.max)>0) orderItems++;
+        if(current === 0) emptyItems++;
       });
       $("totalItems").textContent=INVENTORY_MASTER.length;
       $("orderItems").textContent=orderItems;
@@ -474,23 +508,37 @@
       $("lastCheckSummary").textContent=formatDate(state.lastCheckedAt);
     }
 
+    function rowMarkup(item){
+      const current=getCurrent(item.name);
+      const order=getOrder(current,item.max);
+      const status=getStatus(current,item.max);
+      const percent=getPercent(current,item.max);
+      const value=current === null ? "" : escapeHtml(current);
+      const inputClass=current === null ? "" : (order>0 ? "needs-order" : "is-entered");
+      const orderMarkup=order === null
+        ? '<span class="status">-</span>'
+        : `<span class="status ${order===0?'ok':'danger'}">${escapeHtml(formatStock(order))}</span>`;
+      const meterMarkup=current === null
+        ? '<div class="stock-meter"><strong>-</strong><div class="bar"><span style="width:0%"></span></div></div>'
+        : `<div class="stock-meter"><strong>${escapeHtml(formatStock(current))} / ${escapeHtml(formatStock(item.max))}</strong><div class="bar"><span style="width:${percent}%"></span></div></div>`;
+      const statusClass=status.className ? ` ${status.className}` : "";
+
+      return `<tr data-name="${escapeHtml(item.name)}" class="${status.rowClass}">
+        <td><span class="category">${escapeHtml(item.category)}</span></td>
+        <td><strong>${escapeHtml(item.name)}</strong></td>
+        <td><strong>${escapeHtml(formatStock(item.max))}</strong></td>
+        <td><input class="row-input js-current ${inputClass}" type="number" min="0" step="0.1" inputmode="decimal" placeholder="-" value="${value}"></td>
+        <td>${orderMarkup}</td>
+        <td>${meterMarkup}</td>
+        <td><span class="status${statusClass}">${status.text}</span></td>
+        <td class="last-checked">${formatDate(state.lastCheckedAt)}</td>
+      </tr>`;
+    }
+
     function renderTable(){
       const keyword=$("searchInput").value.trim().toLowerCase();
       const items=INVENTORY_MASTER.filter(i=>`${i.category} ${i.name}`.toLowerCase().includes(keyword));
-      $("inventoryBody").innerHTML=items.map(item=>{
-        const current=getCurrent(item.name), order=getOrder(current,item.max);
-        const status=getStatus(current,item.max), percent=getPercent(current,item.max);
-        return `<tr data-name="${escapeHtml(item.name)}" class="${status.rowClass}">
-          <td><span class="category">${escapeHtml(item.category)}</span></td>
-          <td><strong>${escapeHtml(item.name)}</strong></td>
-          <td><strong>${escapeHtml(formatStock(item.max))}</strong></td>
-          <td><input class="row-input js-current" type="number" min="0" step="0.1" inputmode="decimal" value="${escapeHtml(current)}"></td>
-          <td><span class="status ${order===0?'ok':'danger'}">${escapeHtml(formatStock(order))}</span></td>
-          <td><div class="stock-meter"><strong>${escapeHtml(formatStock(current))} / ${escapeHtml(formatStock(item.max))}</strong><div class="bar"><span style="width:${percent}%"></span></div></div></td>
-          <td><span class="status ${status.className}">${status.text}</span></td>
-          <td class="last-checked">${formatDate(state.lastCheckedAt)}</td>
-        </tr>`;
-      }).join("");
+      $("inventoryBody").innerHTML=items.map(rowMarkup).join("");
     }
 
     function renderLogs(){
@@ -507,56 +555,63 @@
     }
     function render(){ renderSummary(); renderTable(); renderLogs(); }
 
-    $("inventoryBody").addEventListener("input",e=>{
-      const input=e.target.closest(".js-current");
-      if(!input) return;
-
+    function updateRow(input){
       const row=input.closest("tr");
       const name=row.dataset.name;
       const master=INVENTORY_MASTER.find(item=>item.name===name);
       if(!master) return;
 
       const current=parseStock(input.value);
-      const order=getOrder(current,master.max);
-      const status=getStatus(current,master.max);
-      const percent=getPercent(current,master.max);
-
-      state.currentStocks[name]=current;
+      if(current === null) delete state.currentStocks[name];
+      else state.currentStocks[name]=current;
       saveData();
       renderSummary();
 
+      const order=getOrder(current,master.max);
+      const status=getStatus(current,master.max);
+      const percent=getPercent(current,master.max);
       const cells=row.querySelectorAll("td");
-      cells[4].innerHTML=`<span class="status ${order===0?'ok':'danger'}">${escapeHtml(formatStock(order))}</span>`;
-      cells[5].innerHTML=`<div class="stock-meter"><strong>${escapeHtml(formatStock(current))} / ${escapeHtml(formatStock(master.max))}</strong><div class="bar"><span style="width:${percent}%"></span></div></div>`;
+
+      input.classList.toggle("needs-order", current !== null && order > 0);
+      input.classList.toggle("is-entered", current !== null && order === 0);
+      cells[4].innerHTML=order === null
+        ? '<span class="status">-</span>'
+        : `<span class="status ${order===0?'ok':'danger'}">${escapeHtml(formatStock(order))}</span>`;
+      cells[5].innerHTML=current === null
+        ? '<div class="stock-meter"><strong>-</strong><div class="bar"><span style="width:0%"></span></div></div>'
+        : `<div class="stock-meter"><strong>${escapeHtml(formatStock(current))} / ${escapeHtml(formatStock(master.max))}</strong><div class="bar"><span style="width:${percent}%"></span></div></div>`;
       cells[6].innerHTML=`<span class="status ${status.className}">${status.text}</span>`;
       row.className=status.rowClass;
+    }
+
+    $("inventoryBody").addEventListener("input",e=>{
+      const input=e.target.closest(".js-current");
+      if(input) updateRow(input);
     });
 
     $("inventoryBody").addEventListener("keydown",e=>{
       const input=e.target.closest(".js-current");
       if(!input || e.key!=="Enter") return;
-
       e.preventDefault();
-
-      const inputs=Array.from(
-        document.querySelectorAll("#inventoryBody .js-current")
-      );
+      const inputs=Array.from(document.querySelectorAll("#inventoryBody .js-current"));
       const currentIndex=inputs.indexOf(input);
       const nextInput=inputs[(currentIndex+1)%inputs.length];
-
-      if(nextInput){
-        nextInput.focus();
-        nextInput.select();
-      }
+      if(nextInput){ nextInput.focus(); nextInput.select(); }
     });
 
     $("searchInput").addEventListener("input",renderTable);
 
     $("checkInventoryButton").addEventListener("click",()=>{
-      document.querySelectorAll("#inventoryBody tr").forEach(row=>{
-        const input=row.querySelector(".js-current");
-        if(input) state.currentStocks[row.dataset.name]=parseStock(input.value);
-      });
+      const missing=INVENTORY_MASTER.filter(item=>!hasCurrent(item.name));
+      if(missing.length){
+        alert(`未入力の項目が ${missing.length} 件あります。
+「-」の項目をすべて入力してください。`);
+        const firstRow=Array.from(document.querySelectorAll("#inventoryBody tr"))
+          .find(row=>missing.some(item=>item.name===row.dataset.name));
+        firstRow?.querySelector(".js-current")?.focus();
+        return;
+      }
+
       const checkedAt=new Date().toISOString();
       const items=INVENTORY_MASTER.map(item=>{
         const current=getCurrent(item.name);
